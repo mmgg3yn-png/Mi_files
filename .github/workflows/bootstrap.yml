@@ -1,0 +1,79 @@
+# EXPERIMENTAL / UNVERIFIED - never executed. Expect to iterate on it.
+# Rebuilds Termux packages from source for the prefix /data/data/com.mimax.files/files/usr,
+# assembles an apt repository (GitHub Pages, branch gh-pages), and publishes bootstrap zips to release 'bootstrap'.
+# Why rebuild: "com.termux" (10 chars) -> "com.mimax.files" (15 chars); the prefix is baked into ELF files, so binary patching is impossible.
+name: Build Bootstrap
+on: workflow_dispatch
+permissions: { contents: write }
+env:
+  PKG: com.mimax.files
+  REPO_URL: https://mmgg3yn-png.github.io/Mi_files/apt
+  BOOTSTRAP_PKGS: >-
+    bash coreutils apt dpkg termux-tools termux-exec termux-keyring termux-core termux-am termux-am-socket
+    ca-certificates curl findutils grep sed gawk tar gzip bzip2 xz-utils less nano procps psmisc util-linux
+  EXTRA_PKGS: zsh git openssh python nodejs
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix: { arch: [aarch64, arm, x86_64] }
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache || true
+          df -h /
+      - run: git clone --depth 1 https://github.com/termux/termux-packages tp
+      - name: Re-target to ${{ env.PKG }}
+        working-directory: tp
+        run: |
+          grep -rn 'com\.termux' scripts/properties.sh | head -20 || true
+          sed -i 's#TERMUX_APP__PACKAGE_NAME="com.termux"#TERMUX_APP__PACKAGE_NAME="${{ env.PKG }}"#' scripts/properties.sh
+          grep -rl '/data/data/com\.termux' scripts | xargs -r sed -i 's#/data/data/com\.termux#/data/data/${{ env.PKG }}#g'
+          cat >> scripts/properties.sh <<EOP
+          TERMUX_REPO_URL=("${{ env.REPO_URL }}")
+          TERMUX_REPO_DISTRIBUTION=("stable")
+          TERMUX_REPO_COMPONENT=("main")
+          EOP
+          grep -n 'TERMUX_APP__PACKAGE_NAME=\|TERMUX_REPO_URL' scripts/properties.sh
+      - name: Build builder image for the new prefix
+        working-directory: tp/scripts
+        run: docker build -t mi-package-builder .
+      - name: Build packages from source (several hours)
+        working-directory: tp
+        env: { TERMUX_BUILDER_IMAGE_NAME: mi-package-builder }
+        run: |
+          ./scripts/run-docker.sh ./build-package.sh -a ${{ matrix.arch }} -I -o output $BOOTSTRAP_PKGS $EXTRA_PKGS
+          ls output | head -100
+      - uses: actions/upload-artifact@v4
+        with: { name: "debs-${{ matrix.arch }}", path: tp/output/*.deb }
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: debs, pattern: "debs-*", merge-multiple: true }
+      - run: git clone --depth 1 https://github.com/termux/termux-packages tp && git clone --depth 1 https://github.com/termux/termux-apt-repo apt-repo
+      - name: Assemble apt repo
+        run: |
+          sudo apt-get update && sudo apt-get install -y apt-utils zip curl
+          mkdir -p site/apt
+          ./apt-repo/termux-apt-repo debs site/apt stable main
+          find site -maxdepth 4 | head -30
+      - uses: peaceiris/actions-gh-pages@v4
+        with: { github_token: "${{ secrets.GITHUB_TOKEN }}", publish_dir: ./site }
+      - name: Generate bootstrap zips from the freshly built repo
+        run: |
+          (cd site/apt && python3 -m http.server 8000 >/dev/null 2>&1 &)
+          sleep 2
+          cd tp
+          sed -i 's#/data/data/com\.termux#/data/data/${{ env.PKG }}#g' scripts/generate-bootstraps.sh
+          ./scripts/generate-bootstraps.sh --architectures aarch64,arm,x86_64 --repository http://127.0.0.1:8000
+          ls -la bootstrap-*.zip
+      - name: Publish to release 'bootstrap'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release create bootstrap --repo "$GITHUB_REPOSITORY" --title bootstrap --notes "Bootstrap for ${{ env.PKG }}" 2>/dev/null || true
+          gh release upload bootstrap tp/bootstrap-*.zip --clobber --repo "$GITHUB_REPOSITORY"
