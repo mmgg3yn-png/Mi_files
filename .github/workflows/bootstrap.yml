@@ -3,7 +3,10 @@
 # assembles an apt repository (GitHub Pages, branch gh-pages), and publishes bootstrap zips to release 'bootstrap'.
 # Why rebuild: "com.termux" (10 chars) -> "com.mimax.files" (15 chars); the prefix is baked into ELF files, so binary patching is impossible.
 name: Build Bootstrap
-on: workflow_dispatch
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions: { contents: write }
 env:
   PKG: com.mimax.files
@@ -44,7 +47,7 @@ jobs:
         working-directory: tp
         env: { TERMUX_BUILDER_IMAGE_NAME: mi-package-builder }
         run: |
-          ./scripts/run-docker.sh ./build-package.sh -a ${{ matrix.arch }} -I -o output $BOOTSTRAP_PKGS $EXTRA_PKGS
+          ./scripts/run-docker.sh ./build-package.sh -a ${{ matrix.arch }} -o output $BOOTSTRAP_PKGS $EXTRA_PKGS
           ls output | head -100
       - uses: actions/upload-artifact@v4
         with: { name: "debs-${{ matrix.arch }}", path: tp/output/*.deb }
