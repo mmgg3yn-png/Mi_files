@@ -13,7 +13,7 @@ env:
   REPO_URL: https://mmgg3yn-png.github.io/Mi_files/apt
   BOOTSTRAP_PKGS: >-
     bash coreutils apt dpkg termux-tools termux-exec termux-keyring termux-core termux-am termux-am-socket
-    ca-certificates curl findutils grep sed gawk tar gzip bzip2 xz-utils less nano procps psmisc util-linux
+    ca-certificates libcurl findutils grep sed gawk tar gzip bzip2 xz-utils less nano procps psmisc util-linux
   EXTRA_PKGS: zsh git openssh python nodejs
 jobs:
   build:
