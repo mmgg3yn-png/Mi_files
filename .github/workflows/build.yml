@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           apk=$(ls app/build/outputs/apk/debug/*.apk | head -1)
-          unzip -l "$apk" | grep -E 'assets/bootstrap-(aarch64|arm)\\.zip'
+          unzip -l "$apk" | grep -E 'assets/bootstrap-(aarch64|arm)[.]zip'
           for a in aarch64 arm; do
             unzip -l "$apk" | grep -q "assets/bootstrap-$a.zip" || { echo "::error::$a bootstrap not packaged in APK"; exit 1; }
           done

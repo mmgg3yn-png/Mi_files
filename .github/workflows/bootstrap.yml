@@ -43,15 +43,40 @@ jobs:
         working-directory: tp
         run: |
           set -euo pipefail
-          grep -rn 'com\\.termux' scripts/properties.sh | head -20 || true
-          sed -i 's#TERMUX_APP__PACKAGE_NAME="com.termux"#TERMUX_APP__PACKAGE_NAME="${{ env.PKG }}"#' scripts/properties.sh
-          grep -rl '/data/data/com\\.termux' scripts | xargs -r sed -i 's#/data/data/com\\.termux#/data/data/${{ env.PKG }}#g'
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          pkg = os.environ['PKG']
+          root = Path('scripts')
+          old_path = '/data/data/com.termux'
+          new_path = f'/data/data/{pkg}'
+          old_package = 'TERMUX_APP__PACKAGE_NAME="com.termux"'
+          new_package = f'TERMUX_APP__PACKAGE_NAME="{pkg}"'
+          for path in root.rglob('*'):
+              if not path.is_file():
+                  continue
+              try:
+                  original = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              updated = original.replace(old_path, new_path)
+              if path == root / 'properties.sh':
+                  updated = updated.replace(old_package, new_package)
+              if updated != original:
+                  path.write_text(updated, encoding='utf-8')
+          props = (root / 'properties.sh').read_text(encoding='utf-8')
+          if new_package not in props:
+              raise SystemExit('Failed to set TERMUX_APP__PACKAGE_NAME')
+          if old_path in props:
+              raise SystemExit('Old Termux data path remains in properties.sh')
+          PY
           cat >> scripts/properties.sh <<EOP
           TERMUX_REPO_URL=("${{ env.REPO_URL }}")
           TERMUX_REPO_DISTRIBUTION=("stable")
           TERMUX_REPO_COMPONENT=("main")
           EOP
-          grep -n 'TERMUX_APP__PACKAGE_NAME=\\|TERMUX_REPO_URL' scripts/properties.sh
+          grep -nF 'TERMUX_APP__PACKAGE_NAME="${{ env.PKG }}"' scripts/properties.sh
+          grep -nF 'TERMUX_REPO_URL=' scripts/properties.sh
       - name: Build builder image for the new prefix
         working-directory: tp/scripts
         run: docker build -t mi-package-builder .
@@ -73,6 +98,36 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: debs, pattern: "debs-*", merge-multiple: true }
       - run: git clone --depth 1 https://github.com/termux/termux-packages tp && git clone --depth 1 https://github.com/termux/termux-apt-repo apt-repo
+      - name: Retarget bootstrap generator to the custom app prefix
+        working-directory: tp
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          pkg = os.environ['PKG']
+          root = Path('scripts')
+          old_path = '/data/data/com.termux'
+          new_path = f'/data/data/{pkg}'
+          old_package = 'TERMUX_APP__PACKAGE_NAME="com.termux"'
+          new_package = f'TERMUX_APP__PACKAGE_NAME="{pkg}"'
+          for path in root.rglob('*'):
+              if not path.is_file():
+                  continue
+              try:
+                  original = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              updated = original.replace(old_path, new_path)
+              if path == root / 'properties.sh':
+                  updated = updated.replace(old_package, new_package)
+              if updated != original:
+                  path.write_text(updated, encoding='utf-8')
+          props = (root / 'properties.sh').read_text(encoding='utf-8')
+          if new_package not in props:
+              raise SystemExit('Failed to set TERMUX_APP__PACKAGE_NAME for bootstrap generation')
+          PY
+          grep -nF 'TERMUX_APP__PACKAGE_NAME="${{ env.PKG }}"' scripts/properties.sh
       - name: Assemble apt repo
         run: |
           set -euo pipefail
@@ -89,7 +144,6 @@ jobs:
           (cd site/apt && python3 -m http.server 8000 >/dev/null 2>&1 &)
           sleep 2
           cd tp
-          sed -i 's#/data/data/com\\.termux#/data/data/${{ env.PKG }}#g' scripts/generate-bootstraps.sh
           ./scripts/generate-bootstraps.sh --architectures aarch64,arm,x86_64 --repository http://127.0.0.1:8000
           for arch in aarch64 arm x86_64; do
             test -s "bootstrap-${arch}.zip"
